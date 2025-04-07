@@ -6,7 +6,6 @@ from measure.metrics import kernel_rank, generalization_measure, linear_memory_c
 
 NRMSE = lambda y,y_fit: np.mean(((y-y_fit)**2)/np.var(y))
 
-
 class ReservoirFitness:
     """
     Interface for a Callable which takes a graph and returns its fitnesss
@@ -72,7 +71,7 @@ class TaskFitness(ReservoirFitness):
         
         return err
     
-    
+
 class MetricFitness(ReservoirFitness):
 
     def __init__(self,

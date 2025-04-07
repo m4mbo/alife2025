@@ -139,6 +139,7 @@ class Chromosome:
         new_biases = [np.random.uniform(-1, 1, b.shape) for b in self.biases]
         return Chromosome(new_weights, new_biases, self.mutate_rate, self.crossover_rate, self.crossover_style)
    
+
 class EvolvableDGCA(DGCA):
     def __init__(self, n_states, hidden_size=None):
         super().__init__(n_states=n_states, hidden_size=hidden_size)
@@ -153,6 +154,7 @@ class EvolvableDGCA(DGCA):
         chr_action = Chromosome(weights_action, biases_action, mutate_rate, cross_rate, cross_style)
         chr_state = Chromosome(weights_state, biases_state, mutate_rate, cross_rate, cross_style)
         return chr_action, chr_state
+
 
 log_lock = Lock() 
 
