@@ -1,120 +1,109 @@
 import numpy as np
 from grow.reservoir import Reservoir, check_conditions
 from measure.tasks import *
-from measure.metrics import kernel_rank, generalization_measure, linear_memory_capacity, get_metrics
+from measure.metrics import *
 
 
-NRMSE = lambda y,y_fit: np.mean(((y-y_fit)**2)/np.var(y))
+NRMSE = lambda y, y_fit: np.mean(((y - y_fit) ** 2) / np.var(y))
+
 
 class ReservoirFitness:
-    """
-    Interface for a Callable which takes a graph and returns its fitnesss
-    """
-    def __init__(self, high_good: bool):
+    def __init__(self, high_good: bool, self_loops: bool = True, conditions: dict = None, verbose: bool = False):
         self.high_good = high_good
+        self.self_loops = self_loops
+        self.conditions = conditions or {}
+        self.verbose = verbose
+        self.skip_count = 0
+        self.memo = {'fitness': [], 'graph': [], 'model': []}
 
-    def __call__(self, res: Reservoir):
+    def _prepare_reservoir(self, res: Reservoir) -> Reservoir:
+        if not check_conditions(res, self.conditions, self.verbose):
+            self.skip_count += 1
+            return None
+        res_ = res.no_selfloops() if not self.self_loops else res.copy()
+        return res_
+
+    def __call__(self, res: Reservoir) -> float:
         raise NotImplementedError
-    
+
 
 class TaskFitness(ReservoirFitness):
+    """
+    Fitness based on performance in a benchmark task.
+    """
 
     def __init__(self,
                  series: callable,
-                 conditions: dict = dict(),
-                 self_loops: bool = True,
-                 verbose: bool = False,
                  order: int = None,
-                 fixed_series: bool = True
-                 ) -> None:
-        super().__init__(high_good=False)   # error so low is good
-        self.self_loops = self_loops
-        self.conditions = conditions
-        self.verbose = verbose
-        self.skip_count = 0
+                 measurements: int = 5,
+                 fixed_series: bool = True,
+                 **kwargs):
+        super().__init__(high_good=False, **kwargs)  # NRMSE: lower is better
         self.series = series
         self.order = order
-        self.memo = {'fitness': [], 'graph': [], 'model': []}
+        self.measurements = measurements
         self.fixed_series = fixed_series
         self.input, self.target = self.series(order=self.order)
 
     def _generate_series(self):
-        """Generate input and target series, depending on fixed_series flag."""
-        if not self.fixed_series:
-            return self.series(order=self.order) if self.order is not None else self.series()
-        return self.input, self.target
+        return self.series(order=self.order) if not self.fixed_series else (self.input, self.target)
 
     def __call__(self, res: Reservoir) -> float:
-        
-        checks_ok = check_conditions(res, self.conditions, self.verbose)
-        
-        res_ = res.copy()
-        if not self.self_loops:
-            res_ = res.no_selfloops()
-        
-        if checks_ok:
-            errors = []
-            for _ in range(5):  # 5 measurements
-                self.input, self.target = self._generate_series()
-                res_.reset()
-                predictions = res_.bipolar().train(self.input, target=self.target)
-                err = np.nan if predictions is None else np.min((NRMSE(self.target[:, res.washout:], predictions), 1))
-                errors.append(err)
-            valid_errors = [e for e in errors if not np.isnan(e)]
-            err = np.nanmean(errors) if valid_errors else np.nan
-            if self.verbose:
-                print(f'Skipped {self.skip_count}')
-            self.skip_count = 0
-        else:
-            self.skip_count += 1
-            err = np.nan
-        
-        return err
-    
+        res_ = self._prepare_reservoir(res)
+        if res_ is None:
+            return np.nan
+
+        errors = []
+        for _ in range(self.measurements):
+            self.input, self.target = self._generate_series()
+            res_.reset()
+            predictions = res_.bipolar().train(self.input, target=self.target)
+            err = np.nan if predictions is None else min(NRMSE(self.target[:, res.washout:], predictions), 1)
+            errors.append(err)
+
+        valid_errors = [e for e in errors if not np.isnan(e)]
+        final_err = np.nanmean(valid_errors) if valid_errors else np.nan
+
+        if self.verbose:
+            print(f'Skipped {self.skip_count}')
+
+        self.skip_count = 0
+        return final_err
+
 
 class MetricFitness(ReservoirFitness):
+    """
+    Fitness based on intrinsic reservoir metrics (KR, GR, etc.).
+    """
 
-    def __init__(self,
-                 metric: str,
-                 conditions: dict = None,
-                 self_loops: bool = True,
-                 verbose: bool = False
-                 ) -> None:
-        super().__init__(high_good=True)  
-        
+    METRIC_FUNCS = {
+        "kr": lambda res: kernel_rank(res) / res.size(),
+        "gr": lambda res: generalization_rank(res) / res.size(),
+        "lmc": lambda res: linear_memory_capacity(res) / res.size(),
+        "sr": lambda res: 1 - np.abs(1 - spectral_radius(res))
+    }
+
+    def __init__(self, metric: str, **kwargs):
+        super().__init__(high_good=True, **kwargs)
         self.metric = metric
-        self.conditions = conditions or {} 
-        self.self_loops = self_loops
-        self.verbose = verbose
-        self.skip_count = 0
-        self.memo = {'fitness': [], 'graph': [], 'model': []}
-    
-    def _compute_metric(self, res):
-        if self.metric == "KR":  
-            return (kernel_rank(res) / res.size())
-        if self.metric == "GM":
-            return generalization_measure(res)
-        if self.metric == "LMC":
-            return linear_memory_capacity(res)
-        if self.metric == "combined":
-            kr, gm = get_metrics(res)
-            print(kr, gm)
-            return (kr / res.size()) + gm
+
+    def _compute_metric(self, res: Reservoir) -> float:
+        if self.metric == "all":
+            return sum(func(res) for func in self.METRIC_FUNCS.values())
+
+        func = self.METRIC_FUNCS.get(self.metric)
+        if func is None:
+            raise ValueError(f"Unknown metric: {self.metric}")
+
+        return func(res) / res.size()
 
     def __call__(self, res: Reservoir) -> float:
-        
-        checks_ok = check_conditions(res, self.conditions, self.verbose)
-        res_ = res.copy()
+        res_ = self._prepare_reservoir(res)
+        if res_ is None:
+            return np.nan
 
-        if not self.self_loops:
-            res_ = res.no_selfloops()
-
-        if checks_ok:   
-            err = self._compute_metric(res_)
-            if self.verbose:
-                print(f'Skipped {self.skip_count}')
-            self.skip_count = 0
-        else:
-            self.skip_count += 1
-            err = np.nan
-        return err
+        result = self._compute_metric(res_)
+        if self.verbose:
+            print(f'Skipped {self.skip_count}')
+        self.skip_count = 0
+        return result

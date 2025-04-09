@@ -1,11 +1,26 @@
 import numpy as np  
 import warnings
 import graph_tool.all as gt
-from util.consts import POLAR_TABLE, T, ACTIVATION_TABLE
 from grow.graph import GraphDef
 from scipy.sparse.csgraph import connected_components
 from sklearn.linear_model import BayesianRidge
 import matplotlib.pyplot as plt
+
+
+POLARITY_MATRIX = np.array([
+    [1, 1, -1],  # state_from 0
+    [-1, 1, 1],  # state_from 1
+    [1, -1, 1]   # state_from 2
+])
+
+# activation functions
+def linear(x):
+    return x
+
+def tanh(x):
+    return np.tanh(x)
+
+ACTIVATION_TABLE = np.array([tanh, tanh, linear])
 
 
 def check_conditions(res: 'Reservoir',
@@ -221,7 +236,7 @@ class Reservoir(GraphDef):
         if len(states_to) == 0 or len(states_from) == 0:
             return Reservoir(self.A, self.S, self.input_nodes, self.output_nodes)
         # vectorize to weights
-        new_weights = POLAR_TABLE[states_from, states_to]
+        new_weights = POLARITY_MATRIX[states_from, states_to]
 
         A_new = np.zeros_like(self.A)
         A_new[rows, cols] = new_weights  
@@ -258,53 +273,56 @@ class Reservoir(GraphDef):
         final_S = self.S[reachable_mask]
         return Reservoir(final_A, final_S, self.input_nodes, self.output_nodes)
 
-    def train(self, input, target):
+    def train(self, input: np.ndarray, target: np.ndarray):
         """
-        Trains a reservoir computing model using Bayesian Ridge Regression.
-
-        Parameters:
-        - input (input_dim, time_steps): Input data.
-        - inputgain: Scaling factor for w_in.
-        - feedbackgain: Scaling factor for w_res.
-        - output (1, time_steps): Target data.
-        
-        Returns:
-        - predictions (input_dim, time_steps): Predicted output.
+        Trains a MIMO reservoir computing model using Bayesian Ridge Regression.
         """
-        # check if input sequence length matches previous length
-        if self.reservoir_state.shape[1] != input.shape[1]:
-            self.reset(input.shape[1])
+        _, input_time_steps = input.shape
+        output_dim, target_time_steps = target.shape
 
-        state = self._run(input, bias=True)
+        if self.reservoir_state.shape[1] != input_time_steps:
+            self.reset(input_time_steps)
 
-        # tikhonov regularization to fit and generalize on unseen data
-        regression = BayesianRidge(max_iter=3000, tol=1e-6, verbose=False, fit_intercept=False)
+        if input_time_steps != target_time_steps:
+            raise ValueError("Input and target sequences must have the same length.")
+
+        state = self._run(input, bias=True)  # N+1 x T
+
+        X = state.T  # T - washout x N+1)
+
+        w_out = np.zeros((output_dim, X.shape[1]))  # output_dim x N+1
+
+        for i in range(output_dim):
+            y = target[i, self.washout:]  
+            try:
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=RuntimeWarning)
+                    model = BayesianRidge(max_iter=3000, tol=1e-6, fit_intercept=False)
+                    model.fit(X, y)
+                    w_out[i, :] = model.coef_
+            except Exception as e:
+                print(f"Training failed for output {i}: {e}")
+                w_out[i, :] = 0.0
+
+        predictions = w_out @ state  # output_dim x T
         
-        # TODO: linear nodes can cause overflows, suppress warnings for now
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning)  
-                regression.fit(state.T, target[0, self.washout:])
-        except Exception as e:
-            print(f"[ERROR] Regression fitting failed: {e}")
-            return None
-
-        self.w_out = np.expand_dims(regression.coef_, axis=0)
-        predictions = self.w_out @ state
-
-        # formatting output weights
         if self.output_nodes:
             self.w_out[:, :self.input_nodes] = 0
-            self.w_out[:, self.input_nodes+self.output_nodes:] = 0
-        self.w_out = self.w_out[:, :-1]
+            self.w_out[:, self.input_nodes + self.output_nodes:] = 0
+        self.w_out = w_out[:, :-1]
 
         return predictions
 
     def run(self, input):
+        time_steps = input.shape[1]
         # check if input sequence length matches previous length
-        if self.reservoir_state.shape[1] != input.shape[1]:
-            self.reset(input.shape[1])
-        return self.w_out @ self._run(input)
+        if self.reservoir_state.shape[1] != time_steps:
+            self.reset(time_steps)
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning)
+            predictions = self.w_out @ self._run(input)
+        predictions = np.nan_to_num(predictions, nan=0.0)
+        return predictions
     
     def _run(self, input, bias=False):
         """
@@ -341,7 +359,7 @@ class Reservoir(GraphDef):
             filtered_state = np.concatenate((filtered_state, np.ones((1, filtered_state.shape[1]))),axis=0) 
         return filtered_state[:, self.washout:]
  
-    def reset(self, state_dim: int=T):
+    def reset(self, state_dim: int=2000):
         self.reservoir_state = np.zeros((self.size(), state_dim))
         self.w_in = np.random.randint(-1, 2, (1, self.size()))
         if self.output_nodes:

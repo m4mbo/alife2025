@@ -1,82 +1,112 @@
 import numpy as np
 from grow.reservoir import Reservoir
-from util.consts import T
 
 
 def spectral_radius(res: Reservoir):
     eigenvalues = np.linalg.eigvals(res.A)  
     return max(abs(eigenvalues))
 
+def effective_rank(singular_values: np.ndarray, threshold: float = 0.99) -> int:
+    """
+    Computes the number of singular values required to 
+    capture the specified percentage of the total sum.
+    """
+    full_sum = np.sum(singular_values)
+    cutoff = threshold * full_sum
+    tmp_sum = 0.0
+    e_rank = 0
+
+    for val in singular_values:
+        tmp_sum += val
+        e_rank += 1
+        if tmp_sum >= cutoff:
+            break
+    return e_rank
+
 def kernel_rank(res: Reservoir, 
-                input: np.ndarray=None, 
-                state: np.ndarray=None, 
-                num_timesteps: int=T):
-    if input is None:
-        input = np.random.uniform(-1, 1, (1, num_timesteps)).astype(np.float64)
-        input = np.repeat(input, res.input_units, axis=0)
-    if state is None:
-        res.reset()
-        _ = res.run(input)
-    return np.linalg.matrix_rank(res.reservoir_state[:, res.washout:])
+                num_timesteps: int=2000):
+    """
+    Computes the number of non-zero 
+    singular values of the reservoir state matrix.
+    """
+    # generate random input signal in [-1, 1]
+    ui = 2 * np.random.rand(num_timesteps) - 1
+    input = np.tile(ui[:, None], (1, res.input_units)).T.astype(np.float64)
+
+    res.reset()
+    _ = res.run(input)
+
+    state = res.reservoir_state[:, res.washout:]
+    s = np.linalg.svd(state, compute_uv=False)
+    return effective_rank(s)
     
-def magnitude_generalization_rank(res: Reservoir,):
-    pass
+def generalization_rank(res: Reservoir, 
+                        num_timesteps: int=2000):
+    """
+    Computes the Magnitude Generalizationr Rank (MGR).
+    """
+    # generate random input signal in [0.45, 0.55]
+    input = 0.5 + 0.1 * np.random.rand(res.input_units, num_timesteps) - 0.05
+
+    res.reset()
+    _ = res.run(input)
+
+    state = res.reservoir_state[:, res.washout:]
+    s = np.linalg.svd(state, compute_uv=False)
+    return effective_rank(s)
 
 def linear_memory_capacity(res: Reservoir,
-                           input: np.ndarray=None,
-                           output: np.ndarray=None,
-                           num_timesteps: int=T,
-                           predictions: np.ndarray=None,
-                           filter: float=0.0):
+                           num_timesteps: int=2000,
+                           max_delay: int=None,
+                           filter: float=0.1):
     """
+    Computes the linear memory capacity (MC) of a SISO reservoir
+    by training it to reproduce delayed versions of the input.
     """
+    if not max_delay:
+        max_delay = res.size()
+    
     sequence_length = num_timesteps // 2
+    total_length = num_timesteps + max_delay + 1
 
-    if input is None:
-        input = np.random.uniform(-1, 1, (1, num_timesteps)).astype(np.float64)
-        input = np.repeat(input, res.input_units, axis=0)
+    # random input sequence
+    input_signal = 2 * np.random.rand(1, total_length) - 1
 
-    if output is None:
-        output = np.zeros((res.output_units, num_timesteps))
-        for i in range(res.output_units):
-            if i < num_timesteps:
-                output[i, i:num_timesteps] = input[0, 0:num_timesteps - i]
-            else:
-                output[i, 0:num_timesteps - i] = input[0, i:num_timesteps]  # wrap around index
+    # input and delayed targets
+    input_sequence = input_signal[:, max_delay:max_delay + num_timesteps].T
+    target_delays = np.zeros((num_timesteps, max_delay))
 
-    # split
-    train_input = input[:,:sequence_length]
-    train_output = output[:,:sequence_length]
+    for delay in range(1, max_delay + 1):
+        target_delays[:, delay - 1] = input_signal[:, max_delay - delay: max_delay + num_timesteps - delay].T[:, 0]
 
-    test_input = input[:,sequence_length:]
-    test_output = output[:,sequence_length:]
-    test_output = test_output[:,res.washout:]
+    # training and testing sets
+    train_input = input_sequence[:sequence_length].T
+    test_input = input_sequence[sequence_length:].T
 
-    # train the reservoir and get predictions if not provided
-    if predictions is None:
-        res.reset()  # reset the reservoir state
-        _ = res.train(train_input, target=train_output) 
-        predictions = res.run(test_input)  # run the test input through the reservoir
+    train_target = target_delays[:sequence_length].T
+    test_target = target_delays[sequence_length:]
+    test_target = test_target[res.washout:, :]
 
-    # compute the linear memory capacity as the sum of r^2 scores across delays
+    res.reset()
+    _ = res.train(input=train_input, target=train_target)
+    predictions = res.run(test_input)
     
+    # compute mc
     memory_capacities = []
-    for i in range(res.output_units):
-        mean_output = np.mean(test_output[i, :])
-        mean_predict = np.mean(predictions[i, :])
-        sz = predictions.shape[1]
 
-        covariance = np.mean((test_output[i, :] - mean_output) * 
-                      (predictions[i, :] - mean_predict) / (sz - 1))
-        prediction_variance = np.var(predictions[i, :])
-        input_variance = np.var(test_input[i, res.washout:])
+    for i in range(max_delay):
+        y_true = test_target[:, i]
+        y_pred = predictions[i, :]
 
-        # Memory capacity calculation
-        memory_capacity = (covariance ** 2) / (input_variance * prediction_variance)
-        if memory_capacity < filter:
-            memory_capacity = 0.0
-        memory_capacities.append(memory_capacity)
+        cov = np.cov(y_true, y_pred, ddof=1)[0, 1]
+        var_pred = np.var(y_pred)
+        var_true = np.var(y_true)
 
+
+        denom = var_true * var_pred
+        mc_k = (cov ** 2) / denom if denom != 0 else 0.0
+
+        memory_capacities.append(mc_k if mc_k > filter else 0.0)
+
+    memory_capacities = np.nan_to_num(memory_capacities, nan=0.0)
     return np.sum(memory_capacities)
-        
-    

@@ -1,8 +1,17 @@
 import numpy as np
-from util.consts import Q_B, Q_F, Q_M, Q_N, stable_sigmoid
 from grow.reservoir import Reservoir
-import copy
 
+
+def stable_sigmoid(x):
+    """
+    Numerically stable sigmoid function.
+    """
+    x = np.clip(x, -500, 500)  # prevent very large positive/negative values
+    return np.where(
+        x >= 0,
+        1 / (1 + np.exp(-x)),
+        np.exp(x) / (1 + np.exp(x))
+    )
 
 def onehot(x: np.ndarray):
     """
@@ -49,6 +58,20 @@ class MLP:
 
 
 class DGCA(object):
+
+    # kronocker product matrices
+    Q_M = [[1,0], 
+        [0,0]]
+
+    Q_F = [[0,1], 
+        [0,0]]
+
+    Q_B = [[0,0], 
+        [1,0]]
+
+    Q_N = [[0,0], 
+        [0,1]]
+
     def __init__(self, hidden_size=None, n_states: int=None):
         if not n_states:
             return
@@ -86,10 +109,10 @@ class DGCA(object):
         I = np.eye(res.size())
 
         A, S = res.A, res.S
-        A_new = np.kron(Q_M, A) \
-            + np.kron(Q_F, (I @ np.diag(k_fi) + A @ np.diag(k_fa) + A.T @ np.diag(k_ft))) \
-            + np.kron(Q_B, (np.diag(k_bi) @ I + np.diag(k_ba) @ A + np.diag(k_bt) @ A.T)) \
-            + np.kron(Q_N, (np.diag(k_ni) @ I + np.diag(k_na) @ A + np.diag(k_nt) @ A.T))
+        A_new = np.kron(self.Q_M, A) \
+            + np.kron(self.Q_F, (I @ np.diag(k_fi) + A @ np.diag(k_fa) + A.T @ np.diag(k_ft))) \
+            + np.kron(self.Q_B, (np.diag(k_bi) @ I + np.diag(k_ba) @ A + np.diag(k_bt) @ A.T)) \
+            + np.kron(self.Q_N, (np.diag(k_ni) @ I + np.diag(k_na) @ A + np.diag(k_nt) @ A.T))
         
         # keep only the nodes we need
         A_new = A_new[keep,:][:,keep]
