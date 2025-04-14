@@ -4,7 +4,7 @@ from run import run_ga
 
 if __name__ == "__main__":
 
-    total_runs = 150
+    total_runs = 1
 
     args_dict = {
         "pop_size": 10,
@@ -17,7 +17,7 @@ if __name__ == "__main__":
         "order": None,
         "task": None,
         "max_size": 200,
-        "metric": "gr", 
+        "metric": "kr", 
         "n_states": 3,
         "output_file": "fitness.db",
         "num_jobs": total_runs,

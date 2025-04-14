@@ -95,7 +95,7 @@ class MetricFitness(ReservoirFitness):
         if func is None:
             raise ValueError(f"Unknown metric: {self.metric}")
 
-        return func(res) / res.size()
+        return func(res.bipolar())
 
     def __call__(self, res: Reservoir) -> float:
         res_ = self._prepare_reservoir(res)

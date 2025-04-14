@@ -52,17 +52,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args_dict = {
-        "pop_size": 6,
+        "pop_size": 10,
         "mutate_rate": 0.02,
         "cross_rate": 0.5,
         "cross_style": "cols",
         "n_trials": 1000,
         "input_nodes": 0,
         "output_nodes": 0,
-        "order": 10,
-        "task": "narma",
+        "order": None,
+        "task": None,
         "max_size": 200,
-        "metric": None, 
+        "metric": "all", 
         "n_states": 3,
         "output_file": "fitness.db",
         "heavy_log": False

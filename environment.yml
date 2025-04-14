@@ -10,7 +10,9 @@ dependencies:
   - pyarrow
   - scikit-learn
   - jsonpickle  
+  - plotnine
   - pip:
     - wrapt_timeout_decorator
     - multiset
     - reservoirpy
+    - igraph
