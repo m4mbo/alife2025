@@ -4,7 +4,7 @@ from run import run_ga
 
 if __name__ == "__main__":
 
-    total_runs = 1
+    total_runs = 150
 
     args_dict = {
         "pop_size": 10,
@@ -17,7 +17,7 @@ if __name__ == "__main__":
         "order": None,
         "task": None,
         "max_size": 200,
-        "metric": "kr", 
+        "metric": "lmc", 
         "n_states": 3,
         "output_file": "fitness.db",
         "num_jobs": total_runs,
@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     args = SimpleNamespace(**args_dict)
 
-    num_parallel_jobs = 1  # match with cpu cores
+    num_parallel_jobs = 12  # match with cpu cores
 
     Parallel(n_jobs=num_parallel_jobs)(
         delayed(run_ga)(run_id, args) for run_id in range(total_runs)

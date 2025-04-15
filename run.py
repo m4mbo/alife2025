@@ -13,7 +13,10 @@ def run_ga(run_id, args):
     """
     print(f"Starting GA run {run_id}...")
 
-    conditions = {'max_size': args.max_size, 'min_size': 20}
+    conditions = {'max_size': args.max_size, 
+                  'min_size': args.input_nodes+args.output_nodes+20, 
+                #   "io_path": True
+                  }
 
     if args.task:
         fitness_fn = TaskFitness(series=narmax if args.task == "narma" else santa_fe,

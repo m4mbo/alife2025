@@ -176,7 +176,7 @@ class Reservoir(GraphDef):
             # dynamic offsets
             input_x = x_min - 2.0  # left
             output_x = x_max + 2.0  # right
-            spacing = max(abs(y_max - y_min) / max(len(input_nodes), len(output_nodes)), 1.0)  # Vertical spacing
+            spacing = max(abs(y_max - y_min) / max(len(input_nodes), len(output_nodes)), 1.0)  # vertical spacing
 
             # center nodes vertically around graph middle
             center_y = (y_min + y_max) / 2.0
@@ -288,9 +288,13 @@ class Reservoir(GraphDef):
 
         state = self._run(input, bias=True)  # N+1 x T
 
-        X = state.T  # T - washout x N+1)
+        # if output nodes, subset the state
+        if self.output_nodes:
+            state = state[self.input_nodes:self.input_nodes+self.output_nodes, :]
 
-        w_out = np.zeros((output_dim, X.shape[1]))  # output_dim x N+1
+        X = state.T  # T - washout x N'
+
+        w_out = np.zeros((output_dim, X.shape[1]))  # output_dim x N'
 
         for i in range(output_dim):
             y = target[i, self.washout:]  
@@ -306,10 +310,9 @@ class Reservoir(GraphDef):
 
         predictions = w_out @ state  # output_dim x T
         
-        if self.output_nodes:
-            self.w_out[:, :self.input_nodes] = 0
-            self.w_out[:, self.input_nodes + self.output_nodes:] = 0
-        self.w_out = w_out[:, :-1]
+        # if not output nodes, remove the bias node
+        if not self.output_nodes:
+            self.w_out = w_out[:, :-1]
 
         return predictions
 
