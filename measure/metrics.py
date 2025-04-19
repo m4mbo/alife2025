@@ -91,7 +91,7 @@ def linear_memory_capacity(res: Reservoir,
     input_sequence = input_signal[:, max_delay:max_delay + num_timesteps].T
     targets = _delayed_targets(input_signal, num_timesteps, max_delay)
 
-    # Train/test split
+    # train/test split
     train_input = input_sequence[:sequence_length].T
     test_input = input_sequence[sequence_length:].T
     train_target = targets[:sequence_length].T
@@ -131,11 +131,10 @@ def cross_memory_capacity(res: Reservoir,
     flat_indices = triu_indices[0] * max_delay + triu_indices[1]
     cross_terms = products_flat[:, flat_indices]
 
-    target = cross_terms.T
     train_input = input_sequence[:sequence_length].T
     test_input = input_sequence[sequence_length:].T
-    train_target = target[:sequence_length].T
-    test_target = target[sequence_length:]
+    train_target = cross_terms[:sequence_length].T
+    test_target = cross_terms[sequence_length:]
     test_target = test_target[res.washout:, :]
 
     res.reset()
@@ -174,33 +173,3 @@ def quadratic_memory_capacity(res: Reservoir,
 
     mcs = [_compute_mc(test_target[:, i], predictions[i, :], filter) for i in range(max_delay)]
     return np.mean(mcs) if normalize else np.sum(mcs)
-
-
-def nonlinear_memory_capacity(res: Reservoir,
-                              num_timesteps=2000,
-                              max_delay=None,
-                              filter=0.1,
-                              normalize=True):
-    """
-    Computes the nonlinear memory capacity (QMC + XMC) of a reservoir.
-    """
-    if not max_delay:
-        max_delay = res.size()
-
-    qmc = quadratic_memory_capacity(
-        res=res,
-        num_timesteps=num_timesteps,
-        max_delay=max_delay,
-        filter=filter,
-        normalize=True
-    )
-
-    xmc = cross_memory_capacity(
-        res=res,
-        num_timesteps=num_timesteps,
-        filter=filter,
-        normalize=True
-    )
-
-    total_mc =  qmc + xmc
-    return total_mc / 2 if normalize else total_mc

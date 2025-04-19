@@ -81,7 +81,8 @@ class MetricFitness(ReservoirFitness):
         "gr": lambda res: generalization_rank(res) / res.size(),
         "lmc": lambda res: linear_memory_capacity(res, normalize=True),
         "sr": lambda res: 1 - np.abs(1 - spectral_radius(res)),
-        "nlmc": lambda res: nonlinear_memory_capacity(res, normalize=True),
+        "qmc": lambda res: quadratic_memory_capacity(res, normalize=True),
+        "xmc": lambda res: cross_memory_capacity(res, normalize=True),
     }
 
     def __init__(self, metric: str, **kwargs):
@@ -91,6 +92,10 @@ class MetricFitness(ReservoirFitness):
     def _compute_metric(self, res: Reservoir) -> float:
         if self.metric == "all":
             return sum(func(res) for func in self.METRIC_FUNCS.values())
+        
+        if self.metric == "nlmc":
+            return cross_memory_capacity(res, normalize=True) + \
+                   quadratic_memory_capacity(res, normalize=True) 
 
         func = self.METRIC_FUNCS.get(self.metric)
         if func is None:
