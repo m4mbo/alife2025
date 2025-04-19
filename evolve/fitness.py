@@ -79,8 +79,9 @@ class MetricFitness(ReservoirFitness):
     METRIC_FUNCS = {
         "kr": lambda res: kernel_rank(res) / res.size(),
         "gr": lambda res: generalization_rank(res) / res.size(),
-        "lmc": lambda res: linear_memory_capacity(res) / res.size(),
-        "sr": lambda res: 1 - np.abs(1 - spectral_radius(res))
+        "lmc": lambda res: linear_memory_capacity(res, normalize=True),
+        "sr": lambda res: 1 - np.abs(1 - spectral_radius(res)),
+        "nlmc": lambda res: nonlinear_memory_capacity(res, normalize=True),
     }
 
     def __init__(self, metric: str, **kwargs):

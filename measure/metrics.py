@@ -6,6 +6,7 @@ def spectral_radius(res: Reservoir):
     eigenvalues = np.linalg.eigvals(res.A)  
     return max(abs(eigenvalues))
 
+
 def effective_rank(singular_values: np.ndarray, threshold: float = 0.99) -> int:
     """
     Computes the number of singular values required to 
@@ -40,6 +41,7 @@ def kernel_rank(res: Reservoir,
     s = np.linalg.svd(state, compute_uv=False)
     return effective_rank(s)
     
+
 def generalization_rank(res: Reservoir, 
                         num_timesteps: int=2000):
     """
@@ -55,58 +57,150 @@ def generalization_rank(res: Reservoir,
     s = np.linalg.svd(state, compute_uv=False)
     return effective_rank(s)
 
-def linear_memory_capacity(res: Reservoir,
-                           num_timesteps: int=2000,
-                           max_delay: int=None,
-                           filter: float=0.1):
-    """
-    Computes the linear memory capacity (MC) of a SISO reservoir
-    by training it to reproduce delayed versions of the input.
-    """
-    if not max_delay:
-        max_delay = res.size()
-    
-    sequence_length = num_timesteps // 2
+###### memory capacity ######
+
+def _generate_input_signal(num_timesteps, max_delay):
     total_length = num_timesteps + max_delay + 1
+    return 2 * np.random.rand(1, total_length) - 1
 
-    # random input sequence
-    input_signal = 2 * np.random.rand(1, total_length) - 1
-
-    # input and delayed targets
-    input_sequence = input_signal[:, max_delay:max_delay + num_timesteps].T
+def _delayed_targets(input_signal, num_timesteps, max_delay):
     target_delays = np.zeros((num_timesteps, max_delay))
-
     for delay in range(1, max_delay + 1):
         target_delays[:, delay - 1] = input_signal[:, max_delay - delay: max_delay + num_timesteps - delay].T[:, 0]
+    return target_delays
 
-    # training and testing sets
+def _compute_mc(y_true, y_pred, filter=0.1):
+    cov = np.cov(y_true, y_pred, ddof=1)[0, 1]
+    var_pred = np.var(y_pred)
+    var_true = np.var(y_true)
+    denom = var_true * var_pred
+    mc = (cov ** 2) / denom if denom != 0 else 0.0
+    return mc if mc > filter else 0.0
+
+
+def linear_memory_capacity(res: Reservoir,
+                           num_timesteps=2000,
+                           max_delay=None,
+                           filter=0.1,
+                           normalize=True):
+    if not max_delay:
+        max_delay = res.size()
+
+    sequence_length = num_timesteps // 2
+    input_signal = _generate_input_signal(num_timesteps, max_delay)
+    input_sequence = input_signal[:, max_delay:max_delay + num_timesteps].T
+    targets = _delayed_targets(input_signal, num_timesteps, max_delay)
+
+    # Train/test split
     train_input = input_sequence[:sequence_length].T
     test_input = input_sequence[sequence_length:].T
-
-    train_target = target_delays[:sequence_length].T
-    test_target = target_delays[sequence_length:]
+    train_target = targets[:sequence_length].T
+    test_target = targets[sequence_length:]
     test_target = test_target[res.washout:, :]
 
     res.reset()
-    _ = res.train(input=train_input, target=train_target)
+    res.train(train_input, train_target)
     predictions = res.run(test_input)
-    
-    # compute mc
-    memory_capacities = []
 
-    for i in range(max_delay):
-        y_true = test_target[:, i]
-        y_pred = predictions[i, :]
-
-        cov = np.cov(y_true, y_pred, ddof=1)[0, 1]
-        var_pred = np.var(y_pred)
-        var_true = np.var(y_true)
+    mcs = [_compute_mc(test_target[:, i], predictions[i, :], filter) for i in range(max_delay)]
+    return np.mean(mcs) if normalize else np.sum(mcs)
 
 
-        denom = var_true * var_pred
-        mc_k = (cov ** 2) / denom if denom != 0 else 0.0
+def cross_memory_capacity(res: Reservoir,
+                          num_timesteps=2000,
+                          max_delay=30,
+                          filter=0.1,
+                          normalize=True):
+    if not max_delay:
+        max_delay = res.size()
 
-        memory_capacities.append(mc_k if mc_k > filter else 0.0)
+    sequence_length = num_timesteps // 2
+    input_signal = _generate_input_signal(num_timesteps, max_delay)
+    input_sequence = input_signal[:, max_delay:max_delay + num_timesteps].T
 
-    memory_capacities = np.nan_to_num(memory_capacities, nan=0.0)
-    return np.sum(memory_capacities)
+    # delayed matrix
+    delayed = np.zeros((num_timesteps, max_delay))
+    for delay in range(1, max_delay + 1):
+        delayed[:, delay - 1] = input_signal[:, max_delay - delay: max_delay + num_timesteps - delay].T[:, 0]
+
+    # cross terms using upper triangle of delayed x delayed
+    delayed_ = delayed[:, :, np.newaxis]
+    products = delayed_ * delayed_[:, np.newaxis, :]
+    triu_indices = np.triu_indices(max_delay)
+    products_flat = products.reshape(products.shape[0], -1)
+    flat_indices = triu_indices[0] * max_delay + triu_indices[1]
+    cross_terms = products_flat[:, flat_indices]
+
+    target = cross_terms.T
+    train_input = input_sequence[:sequence_length].T
+    test_input = input_sequence[sequence_length:].T
+    train_target = target[:sequence_length].T
+    test_target = target[sequence_length:]
+    test_target = test_target[res.washout:, :]
+
+    res.reset()
+    res.train(train_input, train_target)
+    predictions = res.run(test_input)
+
+    mcs = [_compute_mc(test_target[:, i], predictions[i, :], filter) for i in range(predictions.shape[0])]
+    return np.mean(mcs) if normalize else np.sum(mcs)
+
+
+def quadratic_memory_capacity(res: Reservoir,
+                               num_timesteps=2000,
+                               max_delay=None,
+                               filter=0.1,
+                               normalize=True):
+    if not max_delay:
+        max_delay = res.size()
+
+    sequence_length = num_timesteps // 2
+    input_signal = _generate_input_signal(num_timesteps, max_delay)
+    input_sequence = input_signal[:, max_delay:max_delay + num_timesteps].T
+
+    # quadratic targets
+    targets = _delayed_targets(input_signal, num_timesteps, max_delay)
+    targets = targets ** 2
+
+    train_input = input_sequence[:sequence_length].T
+    test_input = input_sequence[sequence_length:].T
+    train_target = targets[:sequence_length].T
+    test_target = targets[sequence_length:]
+    test_target = test_target[res.washout:, :]
+
+    res.reset()
+    res.train(train_input, train_target)
+    predictions = res.run(test_input)
+
+    mcs = [_compute_mc(test_target[:, i], predictions[i, :], filter) for i in range(max_delay)]
+    return np.mean(mcs) if normalize else np.sum(mcs)
+
+
+def nonlinear_memory_capacity(res: Reservoir,
+                              num_timesteps=2000,
+                              max_delay=None,
+                              filter=0.1,
+                              normalize=True):
+    """
+    Computes the nonlinear memory capacity (QMC + XMC) of a reservoir.
+    """
+    if not max_delay:
+        max_delay = res.size()
+
+    qmc = quadratic_memory_capacity(
+        res=res,
+        num_timesteps=num_timesteps,
+        max_delay=max_delay,
+        filter=filter,
+        normalize=True
+    )
+
+    xmc = cross_memory_capacity(
+        res=res,
+        num_timesteps=num_timesteps,
+        filter=filter,
+        normalize=True
+    )
+
+    total_mc =  qmc + xmc
+    return total_mc / 2 if normalize else total_mc

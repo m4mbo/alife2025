@@ -152,13 +152,18 @@ class Reservoir(GraphDef):
         outline_color = g.new_vertex_property("vector<double>")
         pos = g.new_vertex_property("vector<double>")
 
-        if not input_nodes and not output_nodes:
-            # no I/O nodes
-            for v in g.vertices():
-                pos[v] = other_pos[v]
-                outline_color[v] = [0, 0, 0, 0]  # default outline color (transparent)
-        else:
-            # bounding box of other nodes
+        # outline colors
+        for v in other_nodes:
+            outline_color[v] = [0, 0, 0, 0]     # transparent
+        for i, v in enumerate(input_nodes):
+            outline_color[v] = [1, 0, 0, 0.8]   # red
+        for i, v in enumerate(output_nodes):
+            outline_color[v] = [0, 0, 1, 0.8]   # blue
+
+        # position
+        if input_nodes and output_nodes:
+
+            # if both are present, special layout
             x_min, x_max = float("inf"), float("-inf")
             y_min, y_max = float("inf"), float("-inf")
             for v in other_nodes:
@@ -186,15 +191,15 @@ class Reservoir(GraphDef):
             # assign positions and outline colors for input/output nodes
             for i, v in enumerate(input_nodes):
                 pos[g.vertex(v)] = (input_x, center_y - total_height_input / 2 + i * spacing)
-                outline_color[v] = [1, 0, 0, 0.8]  # red
             for i, v in enumerate(output_nodes):
                 pos[g.vertex(v)] = (output_x, center_y - total_height_output / 2 + i * spacing)
-                outline_color[v] = [0, 0, 1, 0.8]  # blue
-            for v in other_nodes:
+            for i, v in enumerate(other_nodes):
                 pos[v] = other_pos[v]
-                outline_color[v] = [0, 0, 0, 0]  # transparent
+        else:
+            for v in g.vertices():
+                pos[v] = other_pos[v]
 
-        # Assign edge colors based on weights
+        # edge colors
         edge_colors = g.new_edge_property("vector<double>")
         for e in g.edges():
             weight = g.ep.wgt[e]  # Assuming weights are stored as edge property 'wgt'
@@ -203,7 +208,6 @@ class Reservoir(GraphDef):
             else:
                 edge_colors[e] = [1, 0, 0, 1]  # Red for negative weights
 
-        # Assign measure to the graph
         g.vp['outline_color'] = outline_color
         g.vp['pos'] = pos
         g.ep['edge_color'] = edge_colors
@@ -286,11 +290,8 @@ class Reservoir(GraphDef):
         if input_time_steps != target_time_steps:
             raise ValueError("Input and target sequences must have the same length.")
 
-        state = self._run(input, bias=True)  # N+1 x T
-
-        # if output nodes, subset the state
-        if self.output_nodes:
-            state = state[self.input_nodes:self.input_nodes+self.output_nodes, :]
+        # N' = (N+1) or (output_nodes+1)
+        state = self._run(input, bias=True)  # N' x T
 
         X = state.T  # T - washout x N'
 
@@ -310,9 +311,8 @@ class Reservoir(GraphDef):
 
         predictions = w_out @ state  # output_dim x T
         
-        # if not output nodes, remove the bias node
-        if not self.output_nodes:
-            self.w_out = w_out[:, :-1]
+        # remove the bias node
+        self.w_out = w_out[:, :-1]
 
         return predictions
 
@@ -321,20 +321,19 @@ class Reservoir(GraphDef):
         # check if input sequence length matches previous length
         if self.reservoir_state.shape[1] != time_steps:
             self.reset(time_steps)
+        
         with warnings.catch_warnings():
             warnings.filterwarnings("ignore", category=RuntimeWarning)
             predictions = self.w_out @ self._run(input)
+
         predictions = np.nan_to_num(predictions, nan=0.0)
+
         return predictions
     
     def _run(self, input, bias=False):
         """
         Helper function for run. Runs the reservoir without the output layer.
         """
-        # masking input nodes
-        if self.input_nodes:
-            self.w_in[:, self.input_nodes:] = 0 
-
         node_states = self.states_1d()
 
         # running the reservoir
@@ -352,25 +351,26 @@ class Reservoir(GraphDef):
                 activation_function = ACTIVATION_TABLE[node_states[node_idx]]
                 self.reservoir_state[node_idx, i] = np.nan_to_num(activation_function(raw_state[node_idx]), nan=0.0)
         
-        # masking output nodes
         filtered_state = self.reservoir_state
+        
+        # filtering only for output node states
         if self.output_nodes:
-            filtered_state[:self.input_nodes, :] = 0
-            filtered_state[self.input_nodes+self.output_nodes:, :] = 0
+            filtered_state = filtered_state[self.input_nodes:self.input_nodes+self.output_nodes, :]
+        
         # add bias node
         if bias:
             filtered_state = np.concatenate((filtered_state, np.ones((1, filtered_state.shape[1]))),axis=0) 
+
         return filtered_state[:, self.washout:]
  
     def reset(self, state_dim: int=2000):
         self.reservoir_state = np.zeros((self.size(), state_dim))
-        self.w_in = np.random.randint(-1, 2, (1, self.size()))
-        if self.output_nodes:
-            self.w_out = np.zeros((1, self.size()))
-            self.w_out[:, self.input_nodes:self.input_nodes+self.output_nodes] = 1
-        else:
-            self.w_out = np.ones((1, self.size()))
-
+        self.w_in = np.random.randint(-1, 2, (self.input_units, self.size()))
+        # masking input nodes
+        if self.input_nodes:
+            self.w_in[:, self.input_nodes:] = 0 
+        self.w_out = np.zeros((self.output_units, self.output_nodes if self.output_nodes else self.size()))
+       
     def no_selfloops(self) -> 'Reservoir':
         """
         Returns a copy of the graph in which all self-loops have been removed
