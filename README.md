@@ -1,4 +1,4 @@
-# Developmental Graph Cellular Automata Can Grow Reservoirs
+# Growing Reservoirs with Developmental Graph Cellular Automata
 
 
 
