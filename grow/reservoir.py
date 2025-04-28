@@ -366,6 +366,7 @@ class Reservoir(GraphDef):
     def reset(self, state_dim: int=2000):
         self.reservoir_state = np.zeros((self.size(), state_dim))
         self.w_in = np.random.randint(-1, 2, (self.input_units, self.size()))
+        # self.w_in = np.random.uniform(-1, 1, (self.input_units, self.size()))
         # masking input nodes
         if self.input_nodes:
             self.w_in[:, self.input_nodes:] = 0 
