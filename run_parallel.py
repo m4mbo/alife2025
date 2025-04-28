@@ -17,7 +17,7 @@ if __name__ == "__main__":
         "order": None,
         "task": None,
         "max_size": 200,
-        "metric": "xmc", 
+        "metric": "lmc", 
         "n_states": 3,
         "output_file": "fitness.db",
         "num_jobs": total_runs,

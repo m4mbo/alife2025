@@ -30,7 +30,7 @@ def run_ga(run_id, args):
                                    verbose=False)
 
     reservoir = get_seed(args.input_nodes, args.output_nodes, args.n_states)
-    model = EvolvableDGCA(n_states=reservoir.n_states, hidden_size=None)
+    model = EvolvableDGCA(n_states=reservoir.n_states, hidden_size=64)
     runner = Runner(max_steps=100, max_size=300)
 
     mga = ChromosomalMGA(popsize=args.pop_size,
