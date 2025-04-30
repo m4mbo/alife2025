@@ -1,4 +1,6 @@
 # Adapted from Waldegrave et al. (2024): https://doi.org/10.1162/isal_a_00734
+# Copyright (c) 2024, Riversdale Waldegrave
+
 
 import os
 import logging
