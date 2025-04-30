@@ -2,6 +2,7 @@ from joblib import Parallel, delayed
 from types import SimpleNamespace
 from run import run_ga
 
+
 if __name__ == "__main__":
 
     total_runs = 150

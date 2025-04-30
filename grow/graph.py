@@ -1,3 +1,5 @@
+# Adapted from Waldegrave et al. (2024): https://doi.org/10.1162/isal_a_00734
+
 import numpy as np
 import matplotlib.pyplot as plt
 from multiset import FrozenMultiset

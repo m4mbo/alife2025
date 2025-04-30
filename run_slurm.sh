@@ -13,4 +13,4 @@
 source /path/to/conda/activate
 conda activate dgca_tasks
 
-python3 ../../run.py --run_id $SLURM_ARRAY_TASK_ID
+python3 /path/to/run.py --run_id $SLURM_ARRAY_TASK_ID
